@@ -86,6 +86,7 @@ contract WalletTest is Test {
         }
         vm.startPrank(owners[0]);
         wallet.execute(txId);
+        
         vm.expectRevert("tx already executed");
         wallet.approve(0);
         vm.stopPrank();
@@ -93,6 +94,22 @@ contract WalletTest is Test {
 
     /* APPROVE */
 
+    function testAlreadyApproved() public {
+        vm.startPrank(owners[0]);
+        wallet.submit(owners[1], 0, "");
+        uint txId = 0;
+        vm.expectRevert("tx already approved");
+        wallet.approve(txId);
+    }
+
+    function testApprovalSet() public {
+        vm.startPrank(owners[0]);
+        wallet.submit(owners[1], 0, "");
+        uint txId = 0;
+        assert(wallet.approved(txId, owners[0]));
+    }
+
+    /* EXECUTE */
     
 
 }
