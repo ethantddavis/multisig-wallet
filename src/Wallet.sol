@@ -2,6 +2,7 @@
 pragma solidity 0.8.13;
 
 contract Wallet {
+
     struct Transaction {
         address to; 
         uint value;
@@ -39,13 +40,13 @@ contract Wallet {
 
     constructor(address[] memory _owners, uint _requiredApprovals) {
         require(
-            _owners.length > 0 
+            _owners.length >= 2 
             && _owners.length <= 10, 
-            "must have 0 < owners <= 10"
+            "must have 2 <= owners <= 10"
         ); // max of 10 owners 
         require(
             _requiredApprovals > 0 
-            && _requiredApprovals < owners.length, 
+            && _requiredApprovals < _owners.length, 
             "required approvals out of range"
         ); // required approvals must be less than amount of owners
 
@@ -65,7 +66,7 @@ contract Wallet {
     }
 
     function approve(uint _txId) 
-        external 
+        public 
         onlyOwner 
         txExists(_txId) 
         notExecuted(_txId) 
@@ -73,6 +74,7 @@ contract Wallet {
         require(!approved[_txId][msg.sender], "tx already approved");
         approved[_txId][msg.sender] = true;
         emit Approve(msg.sender, _txId);
+        // IDEA: auto execute option
     }
 
     function execute(uint _txId) 
@@ -112,7 +114,10 @@ contract Wallet {
             data: _data,
             executed: false
         }));
-        emit Submit(transactions.length - 1);
+
+        uint _txId = transactions.length - 1;
+        emit Submit(_txId);
+        approve(_txId); //
     }
 
     function _getApprovalCount(uint _txId) private view returns (uint count) {
