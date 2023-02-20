@@ -1,48 +1,51 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-// goerli test constructor params ["0x2DD0e7C4EfF32E33f5fcaeE2aadC99C691134bB5", "0xe6BEE98547975b34EE233862549140C4EF679e5C", "0xDC5f40b6fF4195cbFe77803D4bba14A6b9339Cb9"], 2
-// goerli deployed address 0xA1bB7806B0E68A1150d5699058744Dc1882233CA on 2/19/22
-
 contract Wallet {
 
-    event AddOwner(address indexed owner);
-    event Approve(address indexed owner, uint indexed txId);
-    event ChangeRequiredApprovals(uint8 requiredApprovals);
+    event Approval(address indexed owner, uint indexed txId);
     event Deposit(address indexed sender, uint amount);
-    event Execute(uint indexed txId);
-    event RemoveOwner(address indexed owner);
-    event Revert(bytes data);
-    event Revoke(address indexed owner, uint indexed txId);
-    event Submit(uint indexed txId);
-    event SubmitAddOwner(address indexed owner, uint indexed txId);
-    event SubmitChangeRequiredApprovals(uint8 requiredApprovals, uint indexed txId);
-    event SubmitRemoveOwner(address indexed owner, uint indexed txId);
+    event Execution(uint indexed txId);
+    event Flag(address indexed owner, uint indexed txId);
+    event OwnerAddition(address indexed owner);
+    event OwnerAdditionRequest(address indexed owner, uint indexed txId);
+    event OwnerRemoval(address indexed owner);
+    event OwnerRemovalRequest(address indexed owner, uint indexed txId);
+    event RequirementChange(uint8 requiredApprovals);
+    event RequirementChangeRequest(uint8 requiredApprovals, uint indexed txId);
+    event Revocation(address indexed owner, uint indexed txId);
+    event TransactionRequest(uint indexed txId);
 
     uint8 public constant MAX_OWNERS = 20;
 
     uint8 public requiredApprovals;
+    mapping(uint => mapping(address => bool)) public approved; // txId -> owners -> is approved
+    
+    mapping(address => bool) public isOwner; // address -> is owner 
     address[] public owners;
-    mapping(address => bool) public isOwner; // address -> owner status
-
+    
     Transaction[] public transactions; 
-    mapping(uint => mapping(address => bool)) public approved; // txId -> owners -> approved
-
+    
     struct Transaction {
         address to; 
         uint value;
         bytes data;
         bool executed;
-        // bool failed;
+        bool flagged;
     }
 
     modifier maxOwners(uint _numOwners) {
-        require(_numOwners <= MAX_OWNERS, "must have owners <= 20");
-        _; // because 0 < requiredApprovals < numOwners, 2 <= numOwners <= 20
+        require(_numOwners <= MAX_OWNERS, "cannot exceed 20 owners");
+        _; // because 0 < requiredApprovals < numOwners, numOwners >= 2
     }
     
     modifier notExecuted(uint _txId) {
         require(!transactions[_txId].executed, "tx already executed");
+        _;
+    }
+
+    modifier alreadyOwner(address _owner) {
+        require(isOwner[_owner], "not owner");
         _;
     }
     
@@ -61,28 +64,26 @@ contract Wallet {
         _;
     }
 
-    modifier validRequiredApprovals(uint _numOwners, uint _requiredApprovals) {
+    modifier validOwner(address _owner) {
+        require(_owner != address(0), "invalid owner");
+        require(!isOwner[_owner], "duplicate owner");
+        _;
+    }
+
+    modifier validRequiredApprovals(uint _numOwners, uint8 _requiredApprovals) {
         require(
             _requiredApprovals > 0 
             && _requiredApprovals < _numOwners, 
             "required approvals out of range"
-        ); // required approvals must be less than amount of owners
+        ); 
         _;
     }
 
     constructor(address[] memory _owners, uint8 _requiredApprovals) 
         payable
         validRequiredApprovals(_owners.length, _requiredApprovals) 
-        maxOwners(_owners.length)
     {
-        for (uint i; i < _owners.length; i++) {
-            require(_owners[i] != address(0), "invalid owner");
-            require(!isOwner[_owners[i]], "duplicate owner");
-            
-            isOwner[_owners[i]] = true;
-            owners.push(_owners[i]);
-        }
-
+        for (uint i; i < _owners.length; i++) _addOwner(_owners[i]);
         requiredApprovals = _requiredApprovals;
     }
 
@@ -100,7 +101,7 @@ contract Wallet {
     {
         require(!approved[_txId][msg.sender], "tx already approved");
         approved[_txId][msg.sender] = true;
-        emit Approve(msg.sender, _txId);
+        emit Approval(msg.sender, _txId);
     }
 
     function execute(uint _txId) 
@@ -118,7 +119,18 @@ contract Wallet {
         );
         
         require(success, "tx failed");
-        emit Execute(_txId);
+        emit Execution(_txId);
+    }
+
+    function flag(uint _txId) 
+        external 
+        onlyOwner 
+        txExists(_txId) 
+        notExecuted(_txId)
+    {
+        require(!transactions[_txId].flagged, "tx already flagged");
+        transactions[_txId].flagged = true;
+        emit Flag(msg.sender, _txId);
     }
 
     function revoke(uint _txId) 
@@ -129,76 +141,85 @@ contract Wallet {
     {
         require(approved[_txId][msg.sender], "tx not approved");
         approved[_txId][msg.sender] = false;
-        emit Revoke(msg.sender, _txId);
+        emit Revocation(msg.sender, _txId);
     }
 
-    function submitTransaction(address _to, uint _value, bytes calldata _data) external onlyOwner returns (uint txId) {
-        transactions.push(Transaction({
-            to: _to,
-            value: _value,
-            data: _data,
-            executed: false
-        }));
-
+    function submitTransaction(address _to, uint _value, bytes calldata _data) 
+        external 
+        onlyOwner 
+        returns (uint txId) 
+    {
+        _constructTransaction(_to, _value, _data);
         txId = transactions.length - 1;
-        emit Submit(txId);
+
+        emit TransactionRequest(txId);
         approve(txId); 
     }
 
-    /* SPECIAL SUBMITS */
+    /* SPECIAL SUBMITS */ 
 
-    function submitAddOwner(address _newOwner) external onlyOwner returns (uint txId) {
-        transactions.push(Transaction({
-            to: address(this),
-            value: 0,
-            data: abi.encodeWithSignature("addOwner(address)", _newOwner),
-            executed: false
-        })); 
-
+    function submitAddOwner(address _newOwner) 
+        external 
+        onlyOwner 
+        maxOwners(owners.length + 1) 
+        validOwner(_newOwner) 
+        returns (uint txId) 
+    {
+        _constructTransaction(
+            address(this), 
+            0, 
+            abi.encodeWithSignature("addOwner(address)", _newOwner)
+        );
         txId = transactions.length - 1;
-        emit SubmitAddOwner(_newOwner, txId);
+
+        emit OwnerAdditionRequest(_newOwner, txId);
         approve(txId);
     }
 
-    function submitChangeRequiredApprovals(uint8 _requiredApprovals) external onlyOwner returns (uint txId) {
-        transactions.push(Transaction({
-            to: address(this),
-            value: 0,
-            data: abi.encodeWithSignature("changeRequiredApprovals(uint8)", _requiredApprovals),
-            executed: false
-        })); 
-
+    function submitChangeRequiredApprovals(uint8 _requiredApprovals) 
+        external 
+        onlyOwner 
+        validRequiredApprovals(owners.length, _requiredApprovals) 
+        returns (uint txId) 
+    {
+        _constructTransaction(
+            address(this), 
+            0, 
+            abi.encodeWithSignature("changeRequiredApprovals(uint8)", _requiredApprovals)
+        );
         txId = transactions.length - 1;
-        emit SubmitChangeRequiredApprovals(_requiredApprovals, txId);
+
+        emit RequirementChangeRequest(_requiredApprovals, txId);
         approve(txId);
     }
 
-    function submitRemoveOwner(address _owner) external onlyOwner returns (uint txId) {
-        transactions.push(Transaction({
-            to: address(this),
-            value: 0,
-            data: abi.encodeWithSignature("removeOwner(address)", _owner),
-            executed: false
-        })); 
-
+    function submitRemoveOwner(address _owner) 
+        external 
+        onlyOwner 
+        alreadyOwner(_owner)
+        validRequiredApprovals(owners.length - 1, requiredApprovals - 1) 
+        returns (uint txId) 
+    {
+        _constructTransaction(
+            address(this), 
+            0,
+            abi.encodeWithSignature("removeOwner(address)", _owner)
+        );
         txId = transactions.length - 1;
-        emit SubmitRemoveOwner(_owner, txId);
+        
+        emit OwnerRemovalRequest(_owner, txId);
         approve(txId);
     }
 
     /* WALLET ACTIONS */
 
     function addOwner(address _newOwner) 
-        external 
+        external
         onlyWallet 
-        maxOwners(owners.length + 1) 
+        // checks performed in _addOwner() to remove duplicate code. bad style? 
     { 
-        require(_newOwner != address(0), "invalid owner");
-        require(!isOwner[_newOwner], "duplicate owner");
-
-        isOwner[_newOwner] = true;
-        owners.push(_newOwner);
-        emit AddOwner(_newOwner);
+        _addOwner(_newOwner);
+        emit OwnerAddition(_newOwner);
     }
 
     function changeRequiredApprovals(uint8 _requiredApprovals) 
@@ -207,17 +228,15 @@ contract Wallet {
         validRequiredApprovals(owners.length, _requiredApprovals) 
     {
         requiredApprovals = _requiredApprovals;
-        emit ChangeRequiredApprovals(requiredApprovals);
+        emit RequirementChange(requiredApprovals);
     }
 
     function removeOwner(address _owner) 
         external 
         onlyWallet 
-        validRequiredApprovals(owners.length - 1, requiredApprovals) 
-            // decrement required approvals instead of revert?
-    { 
-        require(isOwner[_owner], "not owner");
-        
+        alreadyOwner(_owner)
+        validRequiredApprovals(owners.length - 1, requiredApprovals - 1) 
+    {   
         isOwner[_owner] = false;
         for (uint i; i < owners.length - 1; i++) {
             if (owners[i] == _owner) {
@@ -227,20 +246,46 @@ contract Wallet {
         }
 
         owners.pop(); 
-        emit RemoveOwner(_owner);
+        if (requiredApprovals == owners.length) {
+            // decrement required approvals if necesssary
+            requiredApprovals -= 1; 
+            emit RequirementChange(requiredApprovals);
+        }
+        emit OwnerRemoval(_owner);
     }
 
     /* VIEW */
 
     function getApprovalCount(uint _txId) public view returns (uint count) {
+        // inconsistency: if owner is removed after approving an unexecuted transaction, 
+        // approved[tx][removed owner] = true, but getApprovalCount will not count this.
+        // This is acceptable, potentially malicious past transaction will not be 
+        // executable without further approval
         for (uint i; i < owners.length; i++) {
             if (approved[_txId][owners[i]]) { 
-                // issue: if owner is removed after approving an unexecuted transaction, 
-                // approved[tx][removed-owner] = true, but getApprovalCount will not count this.
-                // This is fine? potentially malicious past transaction will not be executable 
-                // without further approval 
                 count += 1;
             }
         }
+    }
+
+    /* INTERNAL HELPER */
+
+    function _addOwner(address _newOwner) 
+        private 
+        maxOwners(owners.length + 1) 
+        validOwner(_newOwner)
+    {
+        isOwner[_newOwner] = true;
+        owners.push(_newOwner);
+    }
+
+    function _constructTransaction(address _to, uint _value, bytes memory _data) private {
+        transactions.push(Transaction({
+            to: _to,
+            value: _value,
+            data: _data,
+            executed: false,
+            flagged: false
+        }));
     }
 }

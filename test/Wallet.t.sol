@@ -140,7 +140,7 @@ contract WalletTest is Test {
         }
         vm.prank(owners[0]);
         wallet.execute(txId);
-        (,,, bool executed) = wallet.transactions(txId);
+        (,,,bool executed,) = wallet.transactions(txId);
         assert(executed);
     }
 
@@ -222,12 +222,13 @@ contract WalletTest is Test {
     function testSubmitAddOwnerTransactionRecorded() public {
         vm.prank(owners[0]);
         uint txId = wallet.submitAddOwner(address(this));
-        (address to, uint value, bytes memory data, bool executed) = wallet.transactions(txId);
+        (address to, uint value, bytes memory data, bool executed, bool flagged) = wallet.transactions(txId);
         //console.log(data);
         assertEq(to, address(wallet));
         assertEq(value, 0);
         assertEq(data, abi.encodeWithSignature("addOwner(address)", address(this)));
         assertEq(executed, false);
+        assertEq(flagged, false);
     }
 
     function testAddOwnerZeroAddress() public {
@@ -272,12 +273,13 @@ contract WalletTest is Test {
     function testSubmitChangeRequiredApprovalsTransactionRecorded() public {
         vm.prank(owners[0]);
         uint txId = wallet.submitChangeRequiredApprovals(2);
-        (address to, uint value, bytes memory data, bool executed) = wallet.transactions(txId);
+        (address to, uint value, bytes memory data, bool executed, bool flagged) = wallet.transactions(txId);
         //console.log(string(data));
         assertEq(to, address(wallet));
         assertEq(value, 0);
         assertEq(data, abi.encodeWithSignature("changeRequiredApprovals(uint8)", 2));
         assertEq(executed, false);
+        assertEq(flagged, false);
     }
 
     function testRequiredApprovalsChanged() public {
@@ -297,12 +299,13 @@ contract WalletTest is Test {
     function testSubmitRemoveOwnerTransactionRecorded() public {
         vm.prank(owners[0]);
         uint txId = wallet.submitRemoveOwner(owners[3]);
-        (address to, uint value, bytes memory data, bool executed) = wallet.transactions(txId);
+        (address to, uint value, bytes memory data, bool executed, bool flagged) = wallet.transactions(txId);
         //console.log(string(data));
         assertEq(to, address(wallet));
         assertEq(value, 0);
         assertEq(data, abi.encodeWithSignature("removeOwner(address)", owners[3]));
         assertEq(executed, false);
+        assertEq(flagged, false);
     }
 
     function testRemoveOwnerDoesNotExist() public {
@@ -317,6 +320,12 @@ contract WalletTest is Test {
         wallet.execute(txId);
     }
 
+    // 2 owner 1 required -> 1 owner 0 required -> fail
+    // 3 owner 1 required -> 2 owner 1 required -> success
+    // 3 owner 2 required -> 2 owner 1 required -> success
+    // 4 owner 1 required -> 3 owner 1 required -> success
+    // 4 owner 2 required -> 3 owner 2 required -> success
+    // 4 owner 3 required -> 3 owner 2 required -> success
     function testRemoveTooManyOwners() public {
         vm.startPrank(owners[0]);
         uint tx1 = wallet.submitRemoveOwner(owners[2]);
