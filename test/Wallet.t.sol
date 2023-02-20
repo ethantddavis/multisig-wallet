@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
@@ -29,6 +29,13 @@ contract WalletTest is Test {
         new Wallet(owners, 2);
     }
 
+    function testOneOwner() public {
+        address[] memory owner = new address[](1);
+        owner[0] = address(this);
+        vm.expectRevert();
+        new Wallet(owner, 1);
+    }
+
     function testDuplicateOwner() public {
         owners.push(vm.addr(1));
         vm.expectRevert("duplicate owner");
@@ -57,8 +64,7 @@ contract WalletTest is Test {
 
     function testNotExecuted() public {
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -101,8 +107,7 @@ contract WalletTest is Test {
 
     function testAlreadyApproved() public {
         vm.startPrank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         vm.expectRevert("tx already approved");
         wallet.approve(txId);
         vm.stopPrank();
@@ -110,8 +115,7 @@ contract WalletTest is Test {
 
     function testApprovalSet() public {
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         vm.prank(owners[1]);
         wallet.approve(txId);
         assert(wallet.approved(txId, owners[1]));
@@ -121,8 +125,7 @@ contract WalletTest is Test {
     
     function testNotEnoughApprovals() public {
         vm.startPrank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         vm.expectRevert("more approvals needed");
         wallet.execute(txId);
         vm.stopPrank();
@@ -130,8 +133,7 @@ contract WalletTest is Test {
 
     function testTransactionExecuted() public {
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -144,8 +146,7 @@ contract WalletTest is Test {
 
     function testExecuteCallFails() public {
         vm.prank(owners[0]);
-        wallet.submit(address(this), 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(address(this), 0, "");
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -158,8 +159,7 @@ contract WalletTest is Test {
     function testExecuteEtherSent() public {
         payable(wallet).transfer(1 ether);
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 1 ether, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 1 ether, "");
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -171,8 +171,11 @@ contract WalletTest is Test {
 
     function testExecuteCallWithData() public {
         vm.prank(owners[0]);
-        wallet.submit(address(this), 0, abi.encodeWithSignature("helperSetExecuteFlag()"));
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(
+            address(this), 
+            0, 
+            abi.encodeWithSignature("helperSetExecuteFlag()")
+        );
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -186,8 +189,7 @@ contract WalletTest is Test {
 
     function testRevokeNotApproved() public {
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         vm.prank(owners[1]);
         vm.expectRevert("tx not approved");
         wallet.revoke(txId);
@@ -195,8 +197,7 @@ contract WalletTest is Test {
 
     function testRevokeApproveSetFalse() public {
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         vm.prank(owners[0]);
         wallet.revoke(txId);
         assert(!wallet.approved(txId, owners[0]));
@@ -204,8 +205,7 @@ contract WalletTest is Test {
 
     function testRevokeExecuteFails() public {
         vm.prank(owners[0]);
-        wallet.submit(owners[1], 0, "");
-        uint txId = 0;
+        uint txId = wallet.submitTransaction(owners[1], 0, "");
         for (uint i = 3; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -221,9 +221,9 @@ contract WalletTest is Test {
 
     function testSubmitAddOwnerTransactionRecorded() public {
         vm.prank(owners[0]);
-        wallet.submitAddOwner(address(this));
-        uint txId = 0;
+        uint txId = wallet.submitAddOwner(address(this));
         (address to, uint value, bytes memory data, bool executed) = wallet.transactions(txId);
+        //console.log(data);
         assertEq(to, address(wallet));
         assertEq(value, 0);
         assertEq(data, abi.encodeWithSignature("addOwner(address)", address(this)));
@@ -232,8 +232,7 @@ contract WalletTest is Test {
 
     function testAddOwnerZeroAddress() public {
         vm.prank(owners[0]);
-        wallet.submitAddOwner(address(0));
-        uint txId = 0;
+        uint txId = wallet.submitAddOwner(address(0));
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -245,8 +244,7 @@ contract WalletTest is Test {
 
     function testAddOwnerDuplicateOwner() public {
         vm.prank(owners[0]);
-        wallet.submitAddOwner(owners[0]);
-        uint txId = 0;
+        uint txId = wallet.submitAddOwner(owners[0]);
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -258,8 +256,7 @@ contract WalletTest is Test {
 
     function testAddOwnerRecorded() public {
         vm.prank(owners[0]);
-        wallet.submitAddOwner(address(this));
-        uint txId = 0;
+        uint txId = wallet.submitAddOwner(address(this));
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -274,9 +271,9 @@ contract WalletTest is Test {
 
     function testSubmitChangeRequiredApprovalsTransactionRecorded() public {
         vm.prank(owners[0]);
-        wallet.submitChangeRequiredApprovals(2);
-        uint txId = 0;
+        uint txId = wallet.submitChangeRequiredApprovals(2);
         (address to, uint value, bytes memory data, bool executed) = wallet.transactions(txId);
+        //console.log(string(data));
         assertEq(to, address(wallet));
         assertEq(value, 0);
         assertEq(data, abi.encodeWithSignature("changeRequiredApprovals(uint8)", 2));
@@ -285,8 +282,7 @@ contract WalletTest is Test {
 
     function testRequiredApprovalsChanged() public {
         vm.prank(owners[0]);
-        wallet.submitChangeRequiredApprovals(4);
-        uint txId = 0;
+        uint txId = wallet.submitChangeRequiredApprovals(4);
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -300,9 +296,9 @@ contract WalletTest is Test {
 
     function testSubmitRemoveOwnerTransactionRecorded() public {
         vm.prank(owners[0]);
-        wallet.submitRemoveOwner(owners[3]);
-        uint txId = 0;
+        uint txId = wallet.submitRemoveOwner(owners[3]);
         (address to, uint value, bytes memory data, bool executed) = wallet.transactions(txId);
+        //console.log(string(data));
         assertEq(to, address(wallet));
         assertEq(value, 0);
         assertEq(data, abi.encodeWithSignature("removeOwner(address)", owners[3]));
@@ -311,8 +307,7 @@ contract WalletTest is Test {
 
     function testRemoveOwnerDoesNotExist() public {
         vm.prank(owners[0]);
-        wallet.submitRemoveOwner(address(this));
-        uint txId = 0;
+        uint txId = wallet.submitRemoveOwner(address(this));
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);
@@ -324,11 +319,9 @@ contract WalletTest is Test {
 
     function testRemoveTooManyOwners() public {
         vm.startPrank(owners[0]);
-        wallet.submitRemoveOwner(owners[2]);
-        wallet.submitRemoveOwner(owners[3]);
+        uint tx1 = wallet.submitRemoveOwner(owners[2]);
+        uint tx2 = wallet.submitRemoveOwner(owners[3]);
         vm.stopPrank();
-        uint tx1 = 0;
-        uint tx2 = 1;
         for (uint i = 1; i < owners.length; i++) {
             vm.startPrank(owners[i]);
             wallet.approve(tx1);
@@ -344,8 +337,7 @@ contract WalletTest is Test {
 
     function testRemoveOwnerSuccess() public {
         vm.prank(owners[0]);
-        wallet.submitRemoveOwner(owners[1]);
-        uint txId = 0;
+        uint txId = wallet.submitRemoveOwner(owners[1]);
         for (uint i = 1; i < owners.length; i++) {
             vm.prank(owners[i]);
             wallet.approve(txId);

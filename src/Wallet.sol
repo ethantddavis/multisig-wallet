@@ -1,5 +1,8 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
+
+// goerli test constructor params ["0x2DD0e7C4EfF32E33f5fcaeE2aadC99C691134bB5", "0xe6BEE98547975b34EE233862549140C4EF679e5C", "0xDC5f40b6fF4195cbFe77803D4bba14A6b9339Cb9"], 2
+// goerli deployed address 0xA1bB7806B0E68A1150d5699058744Dc1882233CA on 2/19/22
 
 contract Wallet {
 
@@ -9,6 +12,7 @@ contract Wallet {
     event Deposit(address indexed sender, uint amount);
     event Execute(uint indexed txId);
     event RemoveOwner(address indexed owner);
+    event Revert(bytes data);
     event Revoke(address indexed owner, uint indexed txId);
     event Submit(uint indexed txId);
     event SubmitAddOwner(address indexed owner, uint indexed txId);
@@ -29,11 +33,12 @@ contract Wallet {
         uint value;
         bytes data;
         bool executed;
+        // bool failed;
     }
 
     modifier maxOwners(uint _numOwners) {
         require(_numOwners <= MAX_OWNERS, "must have owners <= 20");
-        _;
+        _; // because 0 < requiredApprovals < numOwners, 2 <= numOwners <= 20
     }
     
     modifier notExecuted(uint _txId) {
@@ -66,6 +71,7 @@ contract Wallet {
     }
 
     constructor(address[] memory _owners, uint8 _requiredApprovals) 
+        payable
         validRequiredApprovals(_owners.length, _requiredApprovals) 
         maxOwners(_owners.length)
     {
@@ -107,7 +113,7 @@ contract Wallet {
 
         Transaction storage transaction = transactions[_txId];
         transaction.executed = true;
-        (bool success, ) = transaction.to.call{value: transaction.value}(
+        (bool success,) = transaction.to.call{value: transaction.value}(
             transaction.data
         );
         
@@ -126,7 +132,7 @@ contract Wallet {
         emit Revoke(msg.sender, _txId);
     }
 
-    function submit(address _to, uint _value, bytes calldata _data) external onlyOwner {
+    function submitTransaction(address _to, uint _value, bytes calldata _data) external onlyOwner returns (uint txId) {
         transactions.push(Transaction({
             to: _to,
             value: _value,
@@ -134,14 +140,14 @@ contract Wallet {
             executed: false
         }));
 
-        uint _txId = transactions.length - 1;
-        emit Submit(_txId);
-        approve(_txId); 
+        txId = transactions.length - 1;
+        emit Submit(txId);
+        approve(txId); 
     }
 
     /* SPECIAL SUBMITS */
 
-    function submitAddOwner(address _newOwner) external onlyOwner {
+    function submitAddOwner(address _newOwner) external onlyOwner returns (uint txId) {
         transactions.push(Transaction({
             to: address(this),
             value: 0,
@@ -149,12 +155,12 @@ contract Wallet {
             executed: false
         })); 
 
-        uint _txId = transactions.length - 1;
-        emit SubmitAddOwner(_newOwner, _txId);
-        approve(_txId);
+        txId = transactions.length - 1;
+        emit SubmitAddOwner(_newOwner, txId);
+        approve(txId);
     }
 
-    function submitChangeRequiredApprovals(uint8 _requiredApprovals) external onlyOwner {
+    function submitChangeRequiredApprovals(uint8 _requiredApprovals) external onlyOwner returns (uint txId) {
         transactions.push(Transaction({
             to: address(this),
             value: 0,
@@ -162,12 +168,12 @@ contract Wallet {
             executed: false
         })); 
 
-        uint _txId = transactions.length - 1;
-        emit SubmitChangeRequiredApprovals(_requiredApprovals, _txId);
-        approve(_txId);
+        txId = transactions.length - 1;
+        emit SubmitChangeRequiredApprovals(_requiredApprovals, txId);
+        approve(txId);
     }
 
-    function submitRemoveOwner(address _owner) external onlyOwner {
+    function submitRemoveOwner(address _owner) external onlyOwner returns (uint txId) {
         transactions.push(Transaction({
             to: address(this),
             value: 0,
@@ -175,9 +181,9 @@ contract Wallet {
             executed: false
         })); 
 
-        uint _txId = transactions.length - 1;
-        emit SubmitRemoveOwner(_owner, _txId);
-        approve(_txId);
+        txId = transactions.length - 1;
+        emit SubmitRemoveOwner(_owner, txId);
+        approve(txId);
     }
 
     /* WALLET ACTIONS */
@@ -208,6 +214,7 @@ contract Wallet {
         external 
         onlyWallet 
         validRequiredApprovals(owners.length - 1, requiredApprovals) 
+            // decrement required approvals instead of revert?
     { 
         require(isOwner[_owner], "not owner");
         
@@ -219,7 +226,7 @@ contract Wallet {
             }
         }
 
-        owners.pop();
+        owners.pop(); 
         emit RemoveOwner(_owner);
     }
 
@@ -227,7 +234,11 @@ contract Wallet {
 
     function getApprovalCount(uint _txId) public view returns (uint count) {
         for (uint i; i < owners.length; i++) {
-            if (approved[_txId][owners[i]]) {
+            if (approved[_txId][owners[i]]) { 
+                // issue: if owner is removed after approving an unexecuted transaction, 
+                // approved[tx][removed-owner] = true, but getApprovalCount will not count this.
+                // This is fine? potentially malicious past transaction will not be executable 
+                // without further approval 
                 count += 1;
             }
         }
