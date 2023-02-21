@@ -1,5 +1,21 @@
 MultiSig Wallet
 
+TODO:
+update tests
+check for duplicate modifiers/require
+write documentation
+
+
+
+
+
+
+
+
+
+
+
+
 goerli constructor params ["0x2DD0e7C4EfF32E33f5fcaeE2aadC99C691134bB5", "0xe6BEE98547975b34EE233862549140C4EF679e5C", "0xDC5f40b6fF4195cbFe77803D4bba14A6b9339Cb9"], 2
 goerli deployed address 0xA1bB7806B0E68A1150d5699058744Dc1882233CA on 2/19/22
 
