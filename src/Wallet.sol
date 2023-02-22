@@ -3,9 +3,9 @@ pragma solidity 0.8.13;
 
 /**
  * @dev Wallet defines a system to store and transact with funds secured by multiple parties.
- * Intended to store a single users funds, as balances are not segregated within the contract.
  * Every owner (signer) has identical privledges, so that any single owner can be compromised 
- * without compromising the funds. 
+ * without compromising the funds. Wallet is intended to store a single users funds, as balances
+ * are not segregated within the contract.
  * 
  * Any address may deposit funds to the wallet, but withdrawing requires action from multiple
  * owners. To withdraw funds or execute any arbitrary transaction from the wallet, an owner must
@@ -25,25 +25,24 @@ pragma solidity 0.8.13;
  */
 contract Wallet {
 
-    event Approval(address indexed owner, uint indexed txId);
-    event Deposit(address indexed sender, uint amount);
-    event Execution(uint indexed txId);
-    event Flag(address indexed owner, uint indexed txId);
-    event OwnerAddition(address indexed owner);
-    event OwnerAdditionRequest(address indexed owner, uint indexed txId);
-    event OwnerRemoval(address indexed owner);
-    event OwnerRemovalRequest(address indexed owner, uint indexed txId);
-    event RequirementChange(uint8 requiredApprovals);
-    event RequirementChangeRequest(uint8 requiredApprovals, uint indexed txId);
-    event Revocation(address indexed owner, uint indexed txId);
-    event TransactionRequest(uint indexed txId);
+    // Once submitted, to, value, and data should not be changed. flagged should be set to true 
+    // when an owner is suspicious of the transaction's intent, or if they know a transaction will
+    // fail when executed. Setting flagged does not happen automatically, only when an owner 
+    // takes initiative.  
+    struct Transaction {
+        address to; 
+        uint value;
+        bytes data;
+        bool executed;
+        bool flagged;
+    }
 
     // Upper bound on owners prevents loops from causing denial of service. 
     // Too many owners increases likleyhood of one being compromised.
-    uint8 public constant MAX_OWNERS = 20;
+    uint public constant MAX_OWNERS = 20;
     
     // Every submitted transaction must be approved >= requiredApprovals before it is executed.
-    uint8 public requiredApprovals;
+    uint public requiredApprovals;
     // Keeps track of whether an owner has approved a transaction. tx -> owner -> approved
     // Elements are not deleted if an owner is removed.
     mapping(uint => mapping(address => bool)) public approved;
@@ -54,18 +53,21 @@ contract Wallet {
     
     // Records every transaction submitted, none should be deleted. 
     Transaction[] public transactions; 
+
+    error TransactionFailed();
     
-    // Once submitted, to, value, and data should not be changed. flagged should be set to true 
-    // when an owner is suspicious of the transaction's intent, or if they know a transaction will
-    // fail when executed. Setting flagged does not happen programmatically, only when an owner 
-    // takes initiative.  
-    struct Transaction {
-        address to; 
-        uint value;
-        bytes data;
-        bool executed;
-        bool flagged;
-    }
+    event Approval(address indexed owner, uint indexed txId);
+    event Deposit(address indexed sender, uint amount);
+    event Execution(uint indexed txId);
+    event Flag(address indexed owner, uint indexed txId);
+    event OwnerAddition(address indexed owner);
+    event OwnerAdditionRequest(address indexed owner, uint indexed txId);
+    event OwnerRemoval(address indexed owner);
+    event OwnerRemovalRequest(address indexed owner, uint indexed txId);
+    event RequirementChange(uint requiredApprovals);
+    event RequirementChangeRequest(uint requiredApprovals, uint indexed txId);
+    event Revocation(address indexed owner, uint indexed txId);
+    event TransactionRequest(address indexed to, uint value, uint indexed txId);
 
     /** 
      * @dev Restricts a function that would increase the number of owners, so that owners.length
@@ -135,7 +137,7 @@ contract Wallet {
      * @dev Restricts a function that would modify requiredApprovals or decrement owners.length 
      * so that values stay in desired range.
      */
-    modifier validRequiredApprovals(uint _numOwners, uint8 _requiredApprovals) {
+    modifier validRequiredApprovals(uint _numOwners, uint _requiredApprovals) {
         require(
             _requiredApprovals > 0 
             && _requiredApprovals < _numOwners, 
@@ -148,13 +150,14 @@ contract Wallet {
      * @dev Sets the initial list of owners, and initial approvals required to execute transactions.
      * Accepts msg.value as an initial deposit.
      */
-    constructor(address[] memory _owners, uint8 _requiredApprovals) 
+    constructor(address[] memory _owners, uint _requiredApprovals) 
         payable
         maxOwners(_owners.length) 
         validRequiredApprovals(_owners.length, _requiredApprovals) 
     {
         // _addOwner performs additional input verification
-        for (uint i; i < _owners.length; i++) _addOwner(_owners[i]);
+        // unchecked for gas optimization, owners.length never > 20
+        unchecked { for (uint i; i < _owners.length; i++) _addOwner(_owners[i]); }
         requiredApprovals = _requiredApprovals;
     }
 
@@ -200,7 +203,7 @@ contract Wallet {
             transaction.data
         );
         
-        require(success, "tx failed");
+        if (!success) revert TransactionFailed();
         emit Execution(_txId);
     }
 
@@ -248,7 +251,7 @@ contract Wallet {
         _constructTransaction(_to, _value, _data);
         txId = transactions.length - 1;
 
-        emit TransactionRequest(txId);
+        emit TransactionRequest(_to, _value, txId);
         _approve(txId); 
     }
 
@@ -286,16 +289,17 @@ contract Wallet {
      * Function is provided for convenience and upfront input validation. The same transaction 
      * could be constructed using submitTransaction.
      */
-    function submitChangeRequiredApprovals(uint8 _requiredApprovals) 
+    function submitChangeRequiredApprovals(uint _requiredApprovals) 
         external 
         onlyOwner 
         validRequiredApprovals(owners.length, _requiredApprovals) 
         returns (uint txId) 
     {
+        require(_requiredApprovals != requiredApprovals, "new amount is current amount");
         _constructTransaction(
             address(this), 
             0, 
-            abi.encodeWithSignature("changeRequiredApprovals(uint8)", _requiredApprovals)
+            abi.encodeWithSignature("changeRequiredApprovals(uint256)", _requiredApprovals)
         );
         txId = transactions.length - 1;
 
@@ -353,7 +357,7 @@ contract Wallet {
      * Function can only be called directly from wallet, but must be marked external so it exists
      * in the contract ABI.
      */
-    function changeRequiredApprovals(uint8 _requiredApprovals) 
+    function changeRequiredApprovals(uint _requiredApprovals) 
         external 
         onlyWallet
         validRequiredApprovals(owners.length, _requiredApprovals) 
@@ -389,17 +393,21 @@ contract Wallet {
     {   
         isOwner[_owner] = false;
         // find owner to delete in array, replace with last owner in array
-        for (uint i; i < owners.length - 1; i++) {
-            if (owners[i] == _owner) {
-                owners[i] = owners[owners.length - 1];
-                break;
+        uint lengthMinusOne = owners.length - 1;
+        unchecked {
+            for (uint i; i < lengthMinusOne; i++) {
+                address ownerAtIndex = owners[i];
+                if (ownerAtIndex == _owner) {
+                    ownerAtIndex = owners[lengthMinusOne];
+                    break;
+                }
             }
         }
         // remove last owner in array
         owners.pop(); 
 
-        if (requiredApprovals == owners.length) {
-            // decrement required approvals if necesssary
+        // decrement required approvals if necesssary
+        if (requiredApprovals == lengthMinusOne) {
             requiredApprovals -= 1; 
             emit RequirementChange(requiredApprovals);
         }
@@ -410,15 +418,16 @@ contract Wallet {
 
     /**
      * @dev Return the amount of approvals a given transaction has received.
+     * 
+     * Inconsistency: if owner is removed after approving an unexecuted transaction,
+     * approved[tx][removed owner] = true, but getApprovalCount will not count this.
+     * This is acceptable, potentially malicious past transaction will not be
+     * executable without further approval
      */
     function getApprovalCount(uint _txId) public view returns (uint count) {
-        // Inconsistency: if owner is removed after approving an unexecuted transaction, 
-        // approved[tx][removed owner] = true, but getApprovalCount will not count this.
-        // This is acceptable, potentially malicious past transaction will not be 
-        // executable without further approval
-        for (uint i; i < owners.length; i++) {
-            if (approved[_txId][owners[i]]) count += 1;
-        }
+        mapping(address => bool) storage _approved = approved[_txId];
+        uint length = owners.length;
+        unchecked { for (uint i; i < length; i++) if (_approved[owners[i]]) count += 1; }
     }
 
     /* INTERNAL HELPER */
